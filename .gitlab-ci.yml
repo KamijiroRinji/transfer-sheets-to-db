@@ -1,0 +1,64 @@
+stages:
+  - lint
+  - build
+  - deploy
+
+variables:
+  IMAGE_BASE_PATH: $CI_REGISTRY/$CI_PROJECT_PATH/$CI_COMMIT_REF_SLUG
+  INSTANCE_NAME: $CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG
+
+before_script:
+  - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+
+
+lint:
+  stage: lint
+  image: python:3.7.2-alpine3.9
+  before_script:
+    - pip install --upgrade pip
+    - pip install black==19.3b0
+    - pip install flake8
+  script:
+    - black --check .
+    - flake8 --max-line-length=88
+  allow_failure: true
+
+
+build:
+  stage: build
+  script:
+    - docker-compose -f docker-compose-ci.yml build
+    - docker-compose -f docker-compose-ci.yml push
+
+
+deploy_prod:
+  stage: deploy
+  script:
+    - docker stack deploy --with-registry-auth --compose-file=docker-compose-ci.yml ${CI_PROJECT_NAME}
+  environment:
+    name: production
+  only:
+    - master
+
+
+deploy_staging:
+  stage: deploy
+  script:
+    - docker stack deploy --with-registry-auth --compose-file=docker-compose-ci.yml ${INSTANCE_NAME}
+  environment:
+    name: staging/$CI_COMMIT_REF_NAME
+    on_stop: stop_staging
+  except:
+    - master
+
+
+stop_staging:
+  stage: deploy
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - docker stack rm ${INSTANCE_NAME}
+  when: manual
+  environment:
+    name: staging/$CI_COMMIT_REF_NAME
+    action: stop
